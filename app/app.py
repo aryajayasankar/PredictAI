@@ -714,17 +714,152 @@ if "optuna_study" in st.session_state:
     )
 
 
+if (
+    "results" in st.session_state
+    and "optuna_study" not in st.session_state
+    ):
+
+        st.info(
+            "Run hyperparameter optimization to "
+            "continue to final model selection."
+        )
 
 
 
 # --------------------------------------------------
-# Final Model
+# Final Model Selection & Training
 # --------------------------------------------------
 
-if "results" in st.session_state:
+if (
+    "results" in st.session_state
+    and "optuna_study" in st.session_state
+    ):
+
+    st.header("Final Model Selection")
+
+    results = st.session_state[
+        "results"
+    ]
+
+    problem_type = st.session_state[
+        "problem_type"
+    ]
+
+    # ----------------------------------------------
+    # Determine primary metric
+    # ----------------------------------------------
+
+    if problem_type == "classification":
+
+        primary_metric = "f1"
+
+    else:
+
+        primary_metric = "r2"
+
+    # ----------------------------------------------
+    # Build candidate table
+    # ----------------------------------------------
+
+    candidate_rows = []
+
+    best_baseline = results.iloc[0]
+
+    candidate_rows.append(
+        {
+            "model": best_baseline["model"],
+            "score": best_baseline[
+                primary_metric
+            ],
+            "source": "Baseline comparison",
+        }
+    )
+
+    # ----------------------------------------------
+    # Add tuned XGBoost if available
+    # ----------------------------------------------
+
+    if "optuna_study" in st.session_state:
+
+        study = st.session_state[
+            "optuna_study"
+        ]
+
+        tuned_score = study.best_value
+
+        candidate_rows.append(
+            {
+                "model": "Tuned XGBoost",
+                "score": tuned_score,
+                "source": "Optuna",
+            }
+        )
+
+    candidate_df = pd.DataFrame(
+        candidate_rows
+    )
+
+    candidate_df = candidate_df.sort_values(
+        by="score",
+        ascending=False,
+    ).reset_index(
+        drop=True
+    )
+
+    st.subheader(
+        "Candidate Models"
+    )
+
+    st.dataframe(
+        candidate_df,
+        use_container_width=True,
+    )
+
+    # ----------------------------------------------
+    # Select winner
+    # ----------------------------------------------
+
+    winning_candidate = (
+        candidate_df.iloc[0]
+    )
+
+    final_model_name = (
+        winning_candidate["model"]
+    )
+
+    final_score = (
+        winning_candidate["score"]
+    )
+
+    if final_model_name == "Tuned XGBoost":
+
+        st.success(
+            f"🏆 Selected model: **Tuned XGBoost** "
+            f"(CV {primary_metric.upper()}: "
+            f"{final_score:.4f})"
+        )
+
+    else:
+
+        st.success(
+            f"🏆 Selected model: "
+            f"**{final_model_name}** "
+            f"(CV {primary_metric.upper()}: "
+            f"{final_score:.4f})"
+        )
+
+    # Store selected candidate
+    st.session_state[
+        "selected_final_model"
+    ] = final_model_name
+
+    # ----------------------------------------------
+    # Train final model
+    # ----------------------------------------------
 
     if st.button(
-        "Train Best Model",
+        "Train Selected Final Model",
+        type="primary",
     ):
 
         X_train = st.session_state[
@@ -751,27 +886,37 @@ if "results" in st.session_state:
             "models"
         ]
 
-        problem_type = st.session_state[
-            "problem_type"
-        ]
+        # ------------------------------------------
+        # Select model object
+        # ------------------------------------------
 
-        best_model_name = (
-            st.session_state[
-                "results"
-            ].iloc[0]["model"]
-        )
+        if final_model_name == "Tuned XGBoost":
 
-        model = models[
-            best_model_name
-        ]
+            model = st.session_state[
+                "tuned_xgboost"
+            ]
+
+        else:
+
+            model = models[
+                final_model_name
+            ]
+
+        # ------------------------------------------
+        # Build pipeline
+        # ------------------------------------------
 
         pipeline = build_model_pipeline(
             preprocessor,
             model,
         )
 
+        # ------------------------------------------
+        # Train
+        # ------------------------------------------
+
         with st.spinner(
-            "Training final model..."
+            "Training selected final model..."
         ):
 
             pipeline = train_model(
@@ -779,6 +924,10 @@ if "results" in st.session_state:
                 X_train,
                 y_train,
             )
+
+        # ------------------------------------------
+        # Evaluate
+        # ------------------------------------------
 
         predictions = predict(
             pipeline,
@@ -797,6 +946,10 @@ if "results" in st.session_state:
             probabilities,
         )
 
+        # ------------------------------------------
+        # Store final model
+        # ------------------------------------------
+
         st.session_state[
             "pipeline"
         ] = pipeline
@@ -805,8 +958,11 @@ if "results" in st.session_state:
             "evaluation"
         ] = evaluation
 
-        # Clear predictions generated
-        # by an older model
+        st.session_state[
+            "final_model_name"
+        ] = final_model_name
+
+        # Clear stale predictions
         st.session_state.pop(
             "prediction_results",
             None,
@@ -818,8 +974,12 @@ if "results" in st.session_state:
         )
 
         st.success(
-            "Final model trained."
+            f"Final model trained: "
+            f"**{final_model_name}**"
         )
+
+
+
 
 
 # --------------------------------------------------
