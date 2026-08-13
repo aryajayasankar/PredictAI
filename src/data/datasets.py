@@ -13,7 +13,7 @@ def load_breast_cancer_dataset():
         as_frame=True
     )
 
-    df = dataset.frame.copy()
+    df = dataset.data.copy()
 
     df["target"] = dataset.target
 
@@ -27,7 +27,7 @@ def load_california_housing_dataset():
         as_frame=True
     )
 
-    df = dataset.frame.copy()
+    df = dataset.data.copy()
 
     df["target"] = dataset.target
 
