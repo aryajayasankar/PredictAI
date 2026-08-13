@@ -83,8 +83,15 @@ def train_model(pipeline, X_train, y_train):
 
 
 def predict(pipeline, X):
-    """
-    Generate predictions using a trained pipeline.
-    """
+    """Generate predictions."""
 
     return pipeline.predict(X)
+
+
+def predict_proba(pipeline, X):
+    """Generate prediction probabilities when supported."""
+
+    if not hasattr(pipeline, "predict_proba"):
+        return None
+
+    return pipeline.predict_proba(X)
