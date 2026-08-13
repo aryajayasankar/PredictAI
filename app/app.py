@@ -37,6 +37,12 @@ from src.models.comparator import (
     compare_models,
 )
 
+from src.models.tuner import (
+    tune_xgboost,
+    build_tuned_xgboost,
+    get_default_n_trials,
+)
+
 from src.evaluation.metrics import (
     evaluate_model,
 )
@@ -77,6 +83,8 @@ def clear_training_state():
         "evaluation",
         "prediction_results",
         "prediction_file_signature",
+        "optuna_study",
+        "tuned_xgboost",
     ]
 
     for key in keys_to_clear:
@@ -435,6 +443,16 @@ if st.button(
         "target_column"
     ] = target_column
 
+    st.session_state.pop(
+        "optuna_study",
+        None,
+    )
+
+    st.session_state.pop(
+        "tuned_xgboost",
+        None,
+    )
+
     # Clear anything from a previous model
     st.session_state.pop(
         "pipeline",
@@ -480,6 +498,223 @@ if "results" in st.session_state:
     st.success(
         f"Best model: **{best_model_name}**"
     )
+
+
+
+
+
+# --------------------------------------------------
+# Hyperparameter Optimization
+# --------------------------------------------------
+
+if "results" in st.session_state:
+
+    st.header("Hyperparameter Optimization")
+
+    st.write(
+        "PredictAI automatically optimizes "
+        "XGBoost hyperparameters using Optuna."
+    )
+
+    st.caption(
+        "The number of optimization trials is "
+        "automatically selected based on dataset size."
+    )
+
+    X_train = st.session_state[
+        "X_train"
+    ]
+
+    y_train = st.session_state[
+        "y_train"
+    ]
+
+    preprocessor = st.session_state[
+        "preprocessor"
+    ]
+
+    problem_type = st.session_state[
+        "problem_type"
+    ]
+
+    automatic_trials = (
+        get_default_n_trials(
+            len(X_train)
+        )
+    )
+
+    st.info(
+        f"Automatic optimization budget: "
+        f"**{automatic_trials} trials**"
+    )
+
+    if st.button(
+        "Optimize XGBoost",
+        type="primary",
+    ):
+
+        progress_bar = st.progress(
+            0
+        )
+
+        progress_text = st.empty()
+
+        best_score_text = st.empty()
+
+        technical_logs = []
+
+        log_container = st.empty()
+
+        def update_progress(
+            trial_number,
+            total_trials,
+            trial_value,
+            best_value,
+            best_params,
+        ):
+
+            progress = (
+                trial_number
+                / total_trials
+            )
+
+            progress_bar.progress(
+                progress
+            )
+
+            progress_text.write(
+                f"Trial {trial_number} "
+                f"/ {total_trials}"
+            )
+
+            best_score_text.write(
+                f"Best CV score: "
+                f"**{best_value:.4f}**"
+            )
+
+            technical_logs.append(
+                f"Trial {trial_number} "
+                f"completed | "
+                f"Score: {trial_value:.4f} | "
+                f"Best: {best_value:.4f}"
+            )
+
+            log_container.code(
+                "\n".join(
+                    technical_logs[-10:]
+                ),
+                language="text",
+            )
+
+        with st.status(
+            "Optimizing XGBoost...",
+            expanded=True,
+        ) as status:
+
+            st.write(
+                "Running cross-validated "
+                "hyperparameter optimization."
+            )
+
+            try:
+
+                study = tune_xgboost(
+                    preprocessor=preprocessor,
+                    X_train=X_train,
+                    y_train=y_train,
+                    problem_type=problem_type,
+                    n_trials=automatic_trials,
+                    cv=5,
+                    progress_callback=(
+                        update_progress
+                    ),
+                )
+
+                tuned_model = (
+                    build_tuned_xgboost(
+                        study,
+                        problem_type,
+                    )
+                )
+
+                st.session_state[
+                    "optuna_study"
+                ] = study
+
+                st.session_state[
+                    "tuned_xgboost"
+                ] = tuned_model
+
+                status.update(
+                    label=(
+                        "XGBoost optimization "
+                        "completed"
+                    ),
+                    state="complete",
+                )
+
+            except Exception as e:
+
+                status.update(
+                    label=(
+                        "Optimization failed"
+                    ),
+                    state="error",
+                )
+
+                st.error(
+                    f"Optuna failed: {e}"
+                )
+
+
+# --------------------------------------------------
+# Optuna Results
+# --------------------------------------------------
+
+if "optuna_study" in st.session_state:
+
+    study = st.session_state[
+        "optuna_study"
+    ]
+
+    st.subheader(
+        "Optimization Results"
+    )
+
+    col1, col2 = st.columns(2)
+
+    col1.metric(
+        "Trials Completed",
+        len(study.trials),
+    )
+
+    col2.metric(
+        "Best CV Score",
+        f"{study.best_value:.4f}",
+    )
+
+    st.write(
+        "**Best Hyperparameters**"
+    )
+
+    best_params_df = pd.DataFrame(
+        [
+            {
+                "parameter": key,
+                "value": value,
+            }
+            for key, value
+            in study.best_params.items()
+        ]
+    )
+
+    st.dataframe(
+        best_params_df,
+        use_container_width=True,
+    )
+
+
+
 
 
 # --------------------------------------------------

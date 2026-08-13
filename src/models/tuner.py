@@ -7,6 +7,23 @@ from sklearn.base import clone
 from xgboost import XGBClassifier, XGBRegressor
 
 
+def get_default_n_trials(
+    n_rows,
+):
+    """
+    Automatically determine the number of
+    Optuna trials based on dataset size.
+    """
+
+    if n_rows <= 1000:
+        return 20
+
+    if n_rows <= 10000:
+        return 15
+
+    return 10
+
+
 def tune_xgboost(
     preprocessor,
     X_train,
@@ -14,10 +31,19 @@ def tune_xgboost(
     problem_type,
     n_trials=20,
     cv=5,
+    progress_callback=None,
 ):
     """
     Tune XGBoost hyperparameters using Optuna.
+
+    progress_callback is called after every
+    completed trial.
     """
+
+    # Reduce noisy Optuna terminal output.
+    optuna.logging.set_verbosity(
+        optuna.logging.WARNING
+    )
 
     def objective(trial):
 
@@ -83,6 +109,7 @@ def tune_xgboost(
             scoring = "r2"
 
         else:
+
             raise ValueError(
                 f"Unsupported problem type: {problem_type}"
             )
@@ -115,9 +142,59 @@ def tune_xgboost(
         direction="maximize",
     )
 
+    def callback(
+        study,
+        trial,
+    ):
+
+        if progress_callback is not None:
+
+            progress_callback(
+                trial_number=trial.number + 1,
+                total_trials=n_trials,
+                trial_value=trial.value,
+                best_value=study.best_value,
+                best_params=study.best_params,
+            )
+
     study.optimize(
         objective,
         n_trials=n_trials,
+        callbacks=[callback],
     )
 
     return study
+
+
+def build_tuned_xgboost(
+    study,
+    problem_type,
+):
+    """
+    Build an XGBoost model using the best
+    hyperparameters found by Optuna.
+    """
+
+    best_params = study.best_params
+
+    if problem_type == "classification":
+
+        return XGBClassifier(
+            **best_params,
+            eval_metric="logloss",
+            random_state=42,
+            n_jobs=-1,
+        )
+
+    if problem_type == "regression":
+
+        return XGBRegressor(
+            **best_params,
+            objective="reg:squarederror",
+            random_state=42,
+            n_jobs=-1,
+        )
+
+    raise ValueError(
+        f"Unsupported problem type: {problem_type}"
+    )
