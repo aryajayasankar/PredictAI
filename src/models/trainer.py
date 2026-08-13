@@ -10,9 +10,7 @@ def split_data(
     random_state=42,
     stratify=True,
 ):
-    """
-    Split features and target into training and testing sets.
-    """
+    """Split features and target."""
 
     stratify_value = y if stratify else None
 
@@ -26,14 +24,12 @@ def split_data(
 
 
 def build_model_pipeline(preprocessor, model):
-    """
-    Combine preprocessing and model into one pipeline.
-    """
+    """Combine preprocessing and model."""
 
     return Pipeline(
         steps=[
             ("preprocessor", clone(preprocessor)),
-            ("model", model),
+            ("model", clone(model)),
         ]
     )
 
@@ -45,9 +41,7 @@ def cross_validate_model(
     scoring,
     cv=5,
 ):
-    """
-    Perform cross-validation on the training data.
-    """
+    """Perform cross-validation."""
 
     results = cross_validate(
         pipeline,
@@ -73,9 +67,7 @@ def cross_validate_model(
 
 
 def train_model(pipeline, X_train, y_train):
-    """
-    Fit the complete preprocessing + model pipeline.
-    """
+    """Fit the complete pipeline."""
 
     pipeline.fit(X_train, y_train)
 
@@ -89,7 +81,7 @@ def predict(pipeline, X):
 
 
 def predict_proba(pipeline, X):
-    """Generate prediction probabilities when supported."""
+    """Generate probabilities when supported."""
 
     if not hasattr(pipeline, "predict_proba"):
         return None
