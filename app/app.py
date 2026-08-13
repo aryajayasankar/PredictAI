@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+import hashlib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,6 +42,10 @@ from src.evaluation.metrics import (
 )
 
 
+# --------------------------------------------------
+# Page Configuration
+# --------------------------------------------------
+
 st.set_page_config(
     page_title="PredictAI",
     page_icon="🤖",
@@ -48,7 +53,59 @@ st.set_page_config(
 )
 
 
+# --------------------------------------------------
+# Helper Functions
+# --------------------------------------------------
+
+def clear_training_state():
+    """
+    Clear all model/training state when the
+    training dataset or target changes.
+    """
+
+    keys_to_clear = [
+        "results",
+        "X_train",
+        "X_test",
+        "y_train",
+        "y_test",
+        "preprocessor",
+        "models",
+        "problem_type",
+        "target_column",
+        "pipeline",
+        "evaluation",
+        "prediction_results",
+        "prediction_file_signature",
+    ]
+
+    for key in keys_to_clear:
+        st.session_state.pop(key, None)
+
+
+def get_file_signature(uploaded_file):
+    """
+    Create a stable signature for an uploaded file.
+    This allows us to detect when the uploaded
+    dataset actually changes.
+    """
+
+    if uploaded_file is None:
+        return None
+
+    file_bytes = uploaded_file.getvalue()
+
+    return hashlib.md5(
+        file_bytes
+    ).hexdigest()
+
+
+# --------------------------------------------------
+# Header
+# --------------------------------------------------
+
 st.title("PredictAI")
+
 st.subheader(
     "End-to-End Machine Learning Prediction Platform"
 )
@@ -61,7 +118,7 @@ st.write(
 
 
 # --------------------------------------------------
-# Upload
+# Training Dataset Upload
 # --------------------------------------------------
 
 st.sidebar.header("Dataset")
@@ -69,8 +126,53 @@ st.sidebar.header("Dataset")
 uploaded_file = st.sidebar.file_uploader(
     "Upload CSV",
     type=["csv"],
+    key="training_csv",
 )
 
+
+# --------------------------------------------------
+# Detect Training Dataset Changes
+# --------------------------------------------------
+
+current_training_signature = (
+    get_file_signature(uploaded_file)
+)
+
+previous_training_signature = (
+    st.session_state.get(
+        "training_file_signature"
+    )
+)
+
+if uploaded_file is None:
+
+    if previous_training_signature is not None:
+
+        clear_training_state()
+
+        st.session_state.pop(
+            "training_file_signature",
+            None,
+        )
+
+else:
+
+    if (
+        previous_training_signature is not None
+        and previous_training_signature
+        != current_training_signature
+    ):
+
+        clear_training_state()
+
+    st.session_state[
+        "training_file_signature"
+    ] = current_training_signature
+
+
+# --------------------------------------------------
+# No Dataset
+# --------------------------------------------------
 
 if uploaded_file is None:
 
@@ -83,12 +185,14 @@ if uploaded_file is None:
 
 
 # --------------------------------------------------
-# Load dataset
+# Load Dataset
 # --------------------------------------------------
 
 try:
 
-    df = pd.read_csv(uploaded_file)
+    df = pd.read_csv(
+        uploaded_file
+    )
 
 except Exception as e:
 
@@ -174,6 +278,30 @@ target_column = st.selectbox(
 )
 
 
+# --------------------------------------------------
+# Detect Target Changes
+# --------------------------------------------------
+
+previous_target = st.session_state.get(
+    "selected_target"
+)
+
+if (
+    previous_target is not None
+    and previous_target != target_column
+):
+
+    clear_training_state()
+
+st.session_state[
+    "selected_target"
+] = target_column
+
+
+# --------------------------------------------------
+# Detect Problem Type
+# --------------------------------------------------
+
 try:
 
     problem_type = detect_problem_type(
@@ -192,6 +320,31 @@ st.success(
     f"Detected problem type: "
     f"**{problem_type.title()}**"
 )
+
+
+# --------------------------------------------------
+# Dataset Information
+# --------------------------------------------------
+
+with st.expander(
+    "Dataset Information"
+):
+
+    st.write(
+        f"Target: `{target_column}`"
+    )
+
+    st.write(
+        f"Problem type: `{problem_type}`"
+    )
+
+    st.write(
+        f"Rows: `{len(df)}`"
+    )
+
+    st.write(
+        f"Columns: `{len(df.columns)}`"
+    )
 
 
 # --------------------------------------------------
@@ -246,15 +399,57 @@ if st.button(
             cv=5,
         )
 
-    st.session_state["results"] = results
-    st.session_state["X_train"] = X_train
-    st.session_state["X_test"] = X_test
-    st.session_state["y_train"] = y_train
-    st.session_state["y_test"] = y_test
-    st.session_state["preprocessor"] = preprocessor
-    st.session_state["models"] = models
-    st.session_state["problem_type"] = problem_type
-    st.session_state["target_column"] = target_column
+    st.session_state[
+        "results"
+    ] = results
+
+    st.session_state[
+        "X_train"
+    ] = X_train
+
+    st.session_state[
+        "X_test"
+    ] = X_test
+
+    st.session_state[
+        "y_train"
+    ] = y_train
+
+    st.session_state[
+        "y_test"
+    ] = y_test
+
+    st.session_state[
+        "preprocessor"
+    ] = preprocessor
+
+    st.session_state[
+        "models"
+    ] = models
+
+    st.session_state[
+        "problem_type"
+    ] = problem_type
+
+    st.session_state[
+        "target_column"
+    ] = target_column
+
+    # Clear anything from a previous model
+    st.session_state.pop(
+        "pipeline",
+        None,
+    )
+
+    st.session_state.pop(
+        "evaluation",
+        None,
+    )
+
+    st.session_state.pop(
+        "prediction_results",
+        None,
+    )
 
     st.success(
         "Model comparison completed."
@@ -262,7 +457,7 @@ if st.button(
 
 
 # --------------------------------------------------
-# Results
+# Model Comparison Results
 # --------------------------------------------------
 
 if "results" in st.session_state:
@@ -288,7 +483,7 @@ if "results" in st.session_state:
 
 
 # --------------------------------------------------
-# Final model
+# Final Model
 # --------------------------------------------------
 
 if "results" in st.session_state:
@@ -375,6 +570,18 @@ if "results" in st.session_state:
             "evaluation"
         ] = evaluation
 
+        # Clear predictions generated
+        # by an older model
+        st.session_state.pop(
+            "prediction_results",
+            None,
+        )
+
+        st.session_state.pop(
+            "prediction_file_signature",
+            None,
+        )
+
         st.success(
             "Final model trained."
         )
@@ -419,25 +626,194 @@ if "evaluation" in st.session_state:
 
 
 # --------------------------------------------------
-# Raw Data
+# Prediction
 # --------------------------------------------------
 
-with st.expander(
-    "Dataset Information"
-):
+if "pipeline" in st.session_state:
+
+    st.header("Make Predictions")
 
     st.write(
-        f"Target: `{target_column}`"
+        "Upload new data using the same feature "
+        "schema as the training dataset."
     )
 
-    st.write(
-        f"Problem type: `{problem_type}`"
+    prediction_file = st.file_uploader(
+        "Upload prediction CSV",
+        type=["csv"],
+        key="prediction_csv",
     )
 
-    st.write(
-        f"Rows: `{len(df)}`"
+    # ----------------------------------------------
+    # Detect prediction file changes
+    # ----------------------------------------------
+
+    current_prediction_signature = (
+        get_file_signature(
+            prediction_file
+        )
     )
 
-    st.write(
-        f"Columns: `{len(df.columns)}`"
+    previous_prediction_signature = (
+        st.session_state.get(
+            "prediction_file_signature"
+        )
+    )
+
+    if prediction_file is None:
+
+        st.session_state.pop(
+            "prediction_results",
+            None,
+        )
+
+        st.session_state.pop(
+            "prediction_file_signature",
+            None,
+        )
+
+    else:
+
+        if (
+            previous_prediction_signature
+            is not None
+            and previous_prediction_signature
+            != current_prediction_signature
+        ):
+
+            st.session_state.pop(
+                "prediction_results",
+                None,
+            )
+
+        st.session_state[
+            "prediction_file_signature"
+        ] = current_prediction_signature
+
+        # ------------------------------------------
+        # Read prediction dataset
+        # ------------------------------------------
+
+        try:
+
+            prediction_df = pd.read_csv(
+                prediction_file
+            )
+
+            st.write(
+                f"Prediction dataset: "
+                f"**{len(prediction_df)} rows**"
+            )
+
+            with st.expander(
+                "Preview Prediction Data"
+            ):
+
+                st.dataframe(
+                    prediction_df.head(20),
+                    use_container_width=True,
+                )
+
+            # --------------------------------------
+            # Generate Predictions
+            # --------------------------------------
+
+            if st.button(
+                "Generate Predictions",
+                type="primary",
+            ):
+
+                from src.prediction.predictor import (
+                    generate_predictions,
+                )
+
+                pipeline = st.session_state[
+                    "pipeline"
+                ]
+
+                try:
+
+                    prediction_results = (
+                        generate_predictions(
+                            pipeline,
+                            prediction_df,
+                        )
+                    )
+
+                    st.session_state[
+                        "prediction_results"
+                    ] = prediction_results
+
+                    st.success(
+                        "Predictions generated successfully."
+                    )
+
+                except ValueError as e:
+
+                    # IMPORTANT:
+                    # Never display stale predictions
+                    # after a failed prediction attempt.
+
+                    st.session_state.pop(
+                        "prediction_results",
+                        None,
+                    )
+
+                    st.error(
+                        f"Schema validation failed: {e}"
+                    )
+
+                except Exception as e:
+
+                    st.session_state.pop(
+                        "prediction_results",
+                        None,
+                    )
+
+                    st.error(
+                        f"Prediction failed: {e}"
+                    )
+
+        except Exception as e:
+
+            st.session_state.pop(
+                "prediction_results",
+                None,
+            )
+
+            st.error(
+                f"Could not read prediction file: {e}"
+            )
+
+
+# --------------------------------------------------
+# Prediction Results
+# --------------------------------------------------
+
+if "prediction_results" in st.session_state:
+
+    st.subheader(
+        "Prediction Results"
+    )
+
+    prediction_results = (
+        st.session_state[
+            "prediction_results"
+        ]
+    )
+
+    st.dataframe(
+        prediction_results,
+        use_container_width=True,
+    )
+
+    csv_data = prediction_results.to_csv(
+        index=False
+    ).encode("utf-8")
+
+    st.download_button(
+        label="Download Predictions CSV",
+        data=csv_data,
+        file_name="predictions.csv",
+        mime="text/csv",
     )
