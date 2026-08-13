@@ -541,141 +541,211 @@ if "results" in st.session_state:
         "problem_type"
     ]
 
+
+
+
+
+
     automatic_trials = (
         get_default_n_trials(
             len(X_train)
         )
     )
 
-    st.info(
-        f"Automatic optimization budget: "
-        f"**{automatic_trials} trials**"
+    # --------------------------------------------------
+    # Smart Optimization Decision
+    # --------------------------------------------------
+
+    # Determine the primary metric used for model comparison.
+    if problem_type == "classification":
+        primary_metric = "f1"
+    else:
+        primary_metric = "r2"
+
+    best_baseline_score = float(
+        st.session_state["results"].iloc[0][
+            primary_metric
+        ]
     )
 
-    if st.button(
-        "Optimize XGBoost",
-        type="primary",
-    ):
+    PERFECT_SCORE_THRESHOLD = 0.999999
 
-        progress_bar = st.progress(
-            0
+    if best_baseline_score >= PERFECT_SCORE_THRESHOLD:
+
+        st.success(
+            f"🏆 Best baseline model already achieved "
+            f"a perfect CV {primary_metric.upper()} score "
+            f"of **{best_baseline_score:.4f}**."
         )
 
-        progress_text = st.empty()
+        st.info(
+            "Hyperparameter optimization was "
+            "automatically skipped because the "
+            "selected CV metric is already perfect."
+        )
 
-        best_score_text = st.empty()
+        st.caption(
+            "For real-world datasets, perfect validation "
+            "performance may indicate a highly deterministic "
+            "dataset or possible target leakage."
+        )
 
-        technical_logs = []
+        # --------------------------------------------------
+        # Skip Optuna
+        # --------------------------------------------------
 
-        log_container = st.empty()
+        st.session_state[
+            "optimization_skipped"
+        ] = True
 
-        def update_progress(
-            trial_number,
-            total_trials,
-            trial_value,
-            best_value,
-            best_params,
+        st.session_state[
+            "optuna_study"
+        ] = None
+
+        st.session_state[
+            "tuned_xgboost"
+        ] = None
+
+
+
+    else:
+
+        st.session_state[
+            "optimization_skipped"
+        ] = False
+
+        st.info(
+            f"Automatic optimization budget: "
+            f"**{automatic_trials} trials**"
+        )
+
+        if st.button(
+            "Optimize XGBoost",
+            type="primary",
         ):
 
-            progress = (
-                trial_number
-                / total_trials
+            progress_bar = st.progress(
+                0
             )
 
-            progress_bar.progress(
-                progress
-            )
+            progress_text = st.empty()
 
-            progress_text.write(
-                f"Trial {trial_number} "
-                f"/ {total_trials}"
-            )
+            best_score_text = st.empty()
 
-            best_score_text.write(
-                f"Best CV score: "
-                f"**{best_value:.4f}**"
-            )
+            technical_logs = []
 
-            technical_logs.append(
-                f"Trial {trial_number} "
-                f"completed | "
-                f"Score: {trial_value:.4f} | "
-                f"Best: {best_value:.4f}"
-            )
+            log_container = st.empty()
 
-            log_container.code(
-                "\n".join(
-                    technical_logs[-10:]
-                ),
-                language="text",
-            )
+            def update_progress(
+                trial_number,
+                total_trials,
+                trial_value,
+                best_value,
+                best_params,
+            ):
 
-        with st.status(
-            "Optimizing XGBoost...",
-            expanded=True,
-        ) as status:
-
-            st.write(
-                "Running cross-validated "
-                "hyperparameter optimization."
-            )
-
-            try:
-
-                study = tune_xgboost(
-                    preprocessor=preprocessor,
-                    X_train=X_train,
-                    y_train=y_train,
-                    problem_type=problem_type,
-                    n_trials=automatic_trials,
-                    cv=5,
-                    progress_callback=(
-                        update_progress
-                    ),
+                progress = (
+                    trial_number
+                    / total_trials
                 )
 
-                tuned_model = (
-                    build_tuned_xgboost(
-                        study,
-                        problem_type,
+                progress_bar.progress(
+                    progress
+                )
+
+                progress_text.write(
+                    f"Trial {trial_number} "
+                    f"/ {total_trials}"
+                )
+
+                best_score_text.write(
+                    f"Best CV score: "
+                    f"**{best_value:.4f}**"
+                )
+
+                technical_logs.append(
+                    f"Trial {trial_number} "
+                    f"completed | "
+                    f"Score: {trial_value:.4f} | "
+                    f"Best: {best_value:.4f}"
+                )
+
+                log_container.code(
+                    "\n".join(
+                        technical_logs[-10:]
+                    ),
+                    language="text",
+                )
+
+            with st.status(
+                "Optimizing XGBoost...",
+                expanded=True,
+            ) as status:
+
+                st.write(
+                    "Running cross-validated "
+                    "hyperparameter optimization."
+                )
+
+                try:
+
+                    study = tune_xgboost(
+                        preprocessor=preprocessor,
+                        X_train=X_train,
+                        y_train=y_train,
+                        problem_type=problem_type,
+                        n_trials=automatic_trials,
+                        cv=5,
+                        progress_callback=(
+                            update_progress
+                        ),
                     )
-                )
 
-                st.session_state[
-                    "optuna_study"
-                ] = study
+                    tuned_model = (
+                        build_tuned_xgboost(
+                            study,
+                            problem_type,
+                        )
+                    )
 
-                st.session_state[
-                    "tuned_xgboost"
-                ] = tuned_model
+                    st.session_state[
+                        "optuna_study"
+                    ] = study
 
-                status.update(
-                    label=(
-                        "XGBoost optimization "
-                        "completed"
-                    ),
-                    state="complete",
-                )
+                    st.session_state[
+                        "tuned_xgboost"
+                    ] = tuned_model
 
-            except Exception as e:
+                    status.update(
+                        label=(
+                            "XGBoost optimization "
+                            "completed"
+                        ),
+                        state="complete",
+                    )
 
-                status.update(
-                    label=(
-                        "Optimization failed"
-                    ),
-                    state="error",
-                )
+                except Exception as e:
 
-                st.error(
-                    f"Optuna failed: {e}"
-                )
+                    status.update(
+                        label=(
+                            "Optimization failed"
+                        ),
+                        state="error",
+                    )
+
+                    st.error(
+                        f"Optuna failed: {e}"
+                    )
 
 
 # --------------------------------------------------
 # Optuna Results
 # --------------------------------------------------
 
-if "optuna_study" in st.session_state:
+if (
+    st.session_state.get("optuna_study")
+    is not None
+):
 
     study = st.session_state[
         "optuna_study"
@@ -718,17 +788,23 @@ if "optuna_study" in st.session_state:
     )
 
 
+# --------------------------------------------------
+# Optimization Not Yet Run
+# --------------------------------------------------
+
 if (
     "results" in st.session_state
-    and "optuna_study" not in st.session_state
-    ):
+    and st.session_state.get("optuna_study") is None
+    and not st.session_state.get(
+        "optimization_skipped",
+        False,
+    )
+):
 
-        st.info(
-            "Run hyperparameter optimization to "
-            "continue to final model selection."
-        )
-
-
+    st.info(
+        "Run hyperparameter optimization to "
+        "continue to final model selection."
+    )
 
 # --------------------------------------------------
 # Final Model Selection & Training
@@ -772,24 +848,24 @@ if (
     candidate_rows.append(
         {
             "model": best_baseline["model"],
-            "score": best_baseline[
-                primary_metric
-            ],
+            "score": best_baseline[primary_metric],
             "source": "Baseline comparison",
         }
     )
 
     # ----------------------------------------------
-    # Add tuned XGBoost if available
+    # Add tuned XGBoost only if Optuna ran
     # ----------------------------------------------
 
-    if "optuna_study" in st.session_state:
+    study = st.session_state.get(
+        "optuna_study"
+    )
 
-        study = st.session_state[
-            "optuna_study"
-        ]
+    if study is not None:
 
-        tuned_score = study.best_value
+        tuned_score = float(
+            study.best_value
+        )
 
         candidate_rows.append(
             {
@@ -799,21 +875,21 @@ if (
             }
         )
 
-
-
     candidate_df = pd.DataFrame(
         candidate_rows
     )
+
+    
 
     # --------------------------------------------------
     # Candidate Model Selection
     # --------------------------------------------------
 
-    # Treat extremely small score differences as a tie.
     TIE_TOLERANCE = 1e-4
 
     baseline_rows = candidate_df[
-        candidate_df["source"] == "Baseline comparison"
+        candidate_df["source"]
+        == "Baseline comparison"
     ]
 
     baseline_score = (
@@ -823,10 +899,14 @@ if (
     )
 
     tuned_rows = candidate_df[
-        candidate_df["source"] == "Optuna"
+        candidate_df["source"]
+        == "Optuna"
     ]
 
-    if (baseline_score is not None and not tuned_rows.empty):
+    if (
+        not tuned_rows.empty
+        and baseline_score is not None
+    ):
 
         tuned_score = float(
             tuned_rows["score"].iloc[0]
@@ -838,7 +918,6 @@ if (
 
         if abs(score_difference) <= TIE_TOLERANCE:
 
-            # Prefer the simpler baseline model
             candidate_df["tie"] = False
 
             candidate_df.loc[
@@ -873,10 +952,6 @@ if (
         drop=True
     )
 
-
-
-    
-
     st.subheader(
         "Candidate Models"
     )
@@ -890,36 +965,20 @@ if (
     # Select winner
     # ----------------------------------------------
 
-    winning_candidate = (
-        candidate_df.iloc[0]
-    )
+    winning_candidate = candidate_df.iloc[0]
 
-    final_model_name = (
-        winning_candidate["model"]
-    )
+    final_model_name = winning_candidate["model"]
 
-    final_score = (
+    final_score = float(
         winning_candidate["score"]
     )
 
-    if final_model_name == "Tuned XGBoost":
+    st.success(
+        f"🏆 Selected model: **{final_model_name}** "
+        f"(CV {primary_metric.upper()}: "
+        f"{final_score:.4f})"
+    )
 
-        st.success(
-            f"🏆 Selected model: **Tuned XGBoost** "
-            f"(CV {primary_metric.upper()}: "
-            f"{final_score:.4f})"
-        )
-
-    else:
-
-        st.success(
-            f"🏆 Selected model: "
-            f"**{final_model_name}** "
-            f"(CV {primary_metric.upper()}: "
-            f"{final_score:.4f})"
-        )
-
-    # Store selected candidate
     st.session_state[
         "selected_final_model"
     ] = final_model_name
@@ -1038,7 +1097,6 @@ if "evaluation" in st.session_state:
 
 
 
-
 # --------------------------------------------------
 # Model Explainability
 # --------------------------------------------------
@@ -1079,9 +1137,8 @@ if (
         options=list(
             range(1, len(X_test) + 1)
         ),
-        format_func=lambda x: (
-            f"Prediction #{x}"
-        ),
+        format_func=lambda x:
+            f"Prediction #{x}",
     )
 
     sample_index = sample_number - 1
@@ -1104,115 +1161,142 @@ if (
         )
 
     # --------------------------------------------------
-    # Explain Prediction
+    # Explain Prediction Button
     # --------------------------------------------------
 
     if st.button(
         "Explain Prediction",
         type="primary",
+        key="explain_prediction_button",
     ):
 
-        with st.spinner(
-            "Calculating SHAP feature contributions..."
-        ):
+        try:
 
-            # Generate prediction
-            prediction = predict(
-                pipeline,
-                sample,
-            )
+            with st.spinner(
+                "Calculating prediction explanation..."
+            ):
 
-            probability = predict_proba(
-                pipeline,
-                sample,
-            )
+                # ------------------------------------------
+                # Generate prediction
+                # ------------------------------------------
 
-            # Calculate SHAP contributions
-            contributions = (
-                get_feature_contributions(
+                prediction = predict(
                     pipeline,
-                    X_train,
                     sample,
                 )
-            )
 
-        # --------------------------------------------------
-        # Prediction Summary
-        # --------------------------------------------------
-
-        st.success(
-            "Prediction explanation generated."
-        )
-
-        st.subheader(
-            "Prediction"
-        )
-
-        if problem_type == "classification":
-
-            predicted_class = prediction[0]
-
-            st.metric(
-                "Predicted Class",
-                str(predicted_class),
-            )
-
-            if probability is not None:
-
-                confidence = (
-                    float(
-                        probability[
-                            0
-                        ].max()
-                    )
-                    * 100
+                probability = predict_proba(
+                    pipeline,
+                    sample,
                 )
+
+                # ------------------------------------------
+                # Calculate SHAP contributions
+                # ------------------------------------------
+
+                contributions = (
+                    get_feature_contributions(
+                        pipeline,
+                        X_train,
+                        sample,
+                    )
+                )
+
+            # ------------------------------------------
+            # Success
+            # ------------------------------------------
+
+            st.success(
+                "Prediction explanation generated."
+            )
+
+            # ------------------------------------------
+            # Prediction Summary
+            # ------------------------------------------
+
+            st.subheader(
+                "Prediction"
+            )
+
+            if problem_type == "classification":
+
+                predicted_class = prediction[0]
 
                 st.metric(
-                    "Confidence",
-                    f"{confidence:.2f}%",
+                    "Predicted Class",
+                    str(predicted_class),
                 )
 
-        else:
+                if probability is not None:
 
-            st.metric(
-                "Predicted Value",
-                f"{float(prediction[0]):.4f}",
+                    confidence = (
+                        float(
+                            probability[0].max()
+                        )
+                        * 100
+                    )
+
+                    st.metric(
+                        "Confidence",
+                        f"{confidence:.2f}%",
+                    )
+
+            else:
+
+                st.metric(
+                    "Predicted Value",
+                    f"{float(prediction[0]):.4f}",
+                )
+
+            # ------------------------------------------
+            # SHAP Contributions
+            # ------------------------------------------
+
+            contributions_df = pd.DataFrame(
+                contributions,
+                columns=[
+                    "feature",
+                    "contribution",
+                ],
             )
 
-        # --------------------------------------------------
-        # SHAP Contributions
-        # --------------------------------------------------
+            st.subheader(
+                "Top Feature Contributions"
+            )
 
-        contributions_df = pd.DataFrame(
-            contributions,
-            columns=[
-                "feature",
-                "contribution",
-            ],
-        )
+            st.dataframe(
+                contributions_df.head(10),
+                use_container_width=True,
+            )
 
-        st.subheader(
-            "Top Feature Contributions"
-        )
+            st.bar_chart(
+                contributions_df.head(10)
+                .set_index("feature")
+            )
 
-        st.dataframe(
-            contributions_df.head(10),
-            use_container_width=True,
-        )
+        except Exception as e:
 
-        st.bar_chart(
-            contributions_df.head(10)
-            .set_index("feature")
-        )
+            # ------------------------------------------
+            # Explainability failure
+            # ------------------------------------------
 
+            st.error(
+                f"Explainability failed: {e}"
+            )
 
-
+            st.info(
+                "The trained model and prediction "
+                "workflow are still available."
+            )
 
 
 # --------------------------------------------------
 # Prediction
 # --------------------------------------------------
+
+
+
+
 
 if "pipeline" in st.session_state:
 
