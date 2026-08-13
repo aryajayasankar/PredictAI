@@ -47,6 +47,10 @@ from src.evaluation.metrics import (
     evaluate_model,
 )
 
+from src.explainability.shap_explainer import (
+    get_feature_contributions,
+)
+
 
 # --------------------------------------------------
 # Page Configuration
@@ -795,16 +799,83 @@ if (
             }
         )
 
+
+
     candidate_df = pd.DataFrame(
         candidate_rows
     )
 
-    candidate_df = candidate_df.sort_values(
-        by="score",
-        ascending=False,
+    # --------------------------------------------------
+    # Candidate Model Selection
+    # --------------------------------------------------
+
+    # Treat extremely small score differences as a tie.
+    TIE_TOLERANCE = 1e-4
+
+    baseline_rows = candidate_df[
+        candidate_df["source"] == "Baseline comparison"
+    ]
+
+    baseline_score = (
+        float(baseline_rows["score"].iloc[0])
+        if not baseline_rows.empty
+        else None
+    )
+
+    tuned_rows = candidate_df[
+        candidate_df["source"] == "Optuna"
+    ]
+
+    if (baseline_score is not None and not tuned_rows.empty):
+
+        tuned_score = float(
+            tuned_rows["score"].iloc[0]
+        )
+
+        score_difference = (
+            tuned_score - baseline_score
+        )
+
+        if abs(score_difference) <= TIE_TOLERANCE:
+
+            # Prefer the simpler baseline model
+            candidate_df["tie"] = False
+
+            candidate_df.loc[
+                candidate_df["source"]
+                == "Baseline comparison",
+                "tie",
+            ] = True
+
+            candidate_df = candidate_df.sort_values(
+                by=["tie", "score"],
+                ascending=[False, False],
+            )
+
+        else:
+
+            candidate_df = candidate_df.sort_values(
+                by="score",
+                ascending=False,
+            )
+
+    else:
+
+        candidate_df = candidate_df.sort_values(
+            by="score",
+            ascending=False,
+        )
+
+    candidate_df = candidate_df.drop(
+        columns=["tie"],
+        errors="ignore",
     ).reset_index(
         drop=True
     )
+
+
+
+    
 
     st.subheader(
         "Candidate Models"
@@ -857,126 +928,71 @@ if (
     # Train final model
     # ----------------------------------------------
 
-    if st.button(
-        "Train Selected Final Model",
-        type="primary",
-    ):
+    if st.button("Train Selected Final Model", type="primary"):
+        X_train = st.session_state["X_train"]
+        y_train = st.session_state["y_train"]
+        X_test = st.session_state["X_test"]
+        y_test = st.session_state["y_test"]
+        preprocessor = st.session_state["preprocessor"]
+        models = st.session_state["models"]
 
-        X_train = st.session_state[
-            "X_train"
-        ]
-
-        y_train = st.session_state[
-            "y_train"
-        ]
-
-        X_test = st.session_state[
-            "X_test"
-        ]
-
-        y_test = st.session_state[
-            "y_test"
-        ]
-
-        preprocessor = st.session_state[
-            "preprocessor"
-        ]
-
-        models = st.session_state[
-            "models"
-        ]
-
-        # ------------------------------------------
-        # Select model object
-        # ------------------------------------------
-
+        # ----------------------------------------------
+        # Select final model
+        # ----------------------------------------------
         if final_model_name == "Tuned XGBoost":
-
-            model = st.session_state[
-                "tuned_xgboost"
-            ]
-
+            model = st.session_state["tuned_xgboost"]
         else:
+            model = models[final_model_name]
 
-            model = models[
-                final_model_name
-            ]
+        # ----------------------------------------------
+        # Training progress
+        # ----------------------------------------------
+        with st.status("Training selected final model...", expanded=True) as status:
+            st.write(f"**Selected model:** {final_model_name}")
 
-        # ------------------------------------------
-        # Build pipeline
-        # ------------------------------------------
+            # Step 1
+            st.write("⟳ Building preprocessing pipeline...")
+            pipeline = build_model_pipeline(preprocessor, model)
+            st.write("✓ Preprocessing pipeline ready.")
 
-        pipeline = build_model_pipeline(
-            preprocessor,
-            model,
-        )
+            # Step 2
+            st.write("⟳ Training final model...")
+            pipeline = train_model(pipeline, X_train, y_train)
+            st.write("✓ Final model trained.")
 
-        # ------------------------------------------
-        # Train
-        # ------------------------------------------
+            # Step 3
+            st.write("⟳ Generating test predictions...")
+            predictions = predict(pipeline, X_test)
+            probabilities = predict_proba(pipeline, X_test)
+            st.write("✓ Predictions generated.")
 
-        with st.spinner(
-            "Training selected final model..."
-        ):
+            # Step 4
+            st.write("⟳ Evaluating final model...")
+            evaluation = evaluate_model(
+                problem_type,
+                y_test,
+                predictions,
+                probabilities,
+            )
+            st.write("✓ Model evaluation completed.")
 
-            pipeline = train_model(
-                pipeline,
-                X_train,
-                y_train,
+            # ------------------------------------------
+            # Save final state
+            # ------------------------------------------
+            st.session_state["pipeline"] = pipeline
+            st.session_state["evaluation"] = evaluation
+            st.session_state["final_model_name"] = final_model_name
+
+            # Clear stale prediction state
+            st.session_state.pop("prediction_results", None)
+            st.session_state.pop("prediction_file_signature", None)
+
+            status.update(
+                label="Final model training completed",
+                state="complete",
             )
 
-        # ------------------------------------------
-        # Evaluate
-        # ------------------------------------------
-
-        predictions = predict(
-            pipeline,
-            X_test,
-        )
-
-        probabilities = predict_proba(
-            pipeline,
-            X_test,
-        )
-
-        evaluation = evaluate_model(
-            problem_type,
-            y_test,
-            predictions,
-            probabilities,
-        )
-
-        # ------------------------------------------
-        # Store final model
-        # ------------------------------------------
-
-        st.session_state[
-            "pipeline"
-        ] = pipeline
-
-        st.session_state[
-            "evaluation"
-        ] = evaluation
-
-        st.session_state[
-            "final_model_name"
-        ] = final_model_name
-
-        # Clear stale predictions
-        st.session_state.pop(
-            "prediction_results",
-            None,
-        )
-
-        st.session_state.pop(
-            "prediction_file_signature",
-            None,
-        )
-
-        st.success(
-            f"Final model trained: "
-            f"**{final_model_name}**"
-        )
+        
 
 
 
@@ -1020,6 +1036,180 @@ if "evaluation" in st.session_state:
             )
 
 
+
+
+
+# --------------------------------------------------
+# Model Explainability
+# --------------------------------------------------
+
+if (
+    "pipeline" in st.session_state
+    and "X_train" in st.session_state
+    and "X_test" in st.session_state
+):
+
+    st.header("Model Explainability")
+
+    st.write(
+        "Understand which features contributed most "
+        "to an individual prediction using SHAP."
+    )
+
+    X_train = st.session_state["X_train"]
+    X_test = st.session_state["X_test"]
+    pipeline = st.session_state["pipeline"]
+    problem_type = st.session_state["problem_type"]
+
+    # --------------------------------------------------
+    # Test Set Information
+    # --------------------------------------------------
+
+    st.info(
+        f"**Test set:** {len(X_test):,} samples  |  "
+        f"**Features:** {X_test.shape[1]:,}"
+    )
+
+    # --------------------------------------------------
+    # Prediction Selection
+    # --------------------------------------------------
+
+    sample_number = st.selectbox(
+        "Select prediction to explain",
+        options=list(
+            range(1, len(X_test) + 1)
+        ),
+        format_func=lambda x: (
+            f"Prediction #{x}"
+        ),
+    )
+
+    sample_index = sample_number - 1
+
+    sample = X_test.iloc[
+        [sample_index]
+    ]
+
+    # --------------------------------------------------
+    # Show Selected Sample
+    # --------------------------------------------------
+
+    with st.expander(
+        "View selected sample"
+    ):
+
+        st.dataframe(
+            sample,
+            use_container_width=True,
+        )
+
+    # --------------------------------------------------
+    # Explain Prediction
+    # --------------------------------------------------
+
+    if st.button(
+        "Explain Prediction",
+        type="primary",
+    ):
+
+        with st.spinner(
+            "Calculating SHAP feature contributions..."
+        ):
+
+            # Generate prediction
+            prediction = predict(
+                pipeline,
+                sample,
+            )
+
+            probability = predict_proba(
+                pipeline,
+                sample,
+            )
+
+            # Calculate SHAP contributions
+            contributions = (
+                get_feature_contributions(
+                    pipeline,
+                    X_train,
+                    sample,
+                )
+            )
+
+        # --------------------------------------------------
+        # Prediction Summary
+        # --------------------------------------------------
+
+        st.success(
+            "Prediction explanation generated."
+        )
+
+        st.subheader(
+            "Prediction"
+        )
+
+        if problem_type == "classification":
+
+            predicted_class = prediction[0]
+
+            st.metric(
+                "Predicted Class",
+                str(predicted_class),
+            )
+
+            if probability is not None:
+
+                confidence = (
+                    float(
+                        probability[
+                            0
+                        ].max()
+                    )
+                    * 100
+                )
+
+                st.metric(
+                    "Confidence",
+                    f"{confidence:.2f}%",
+                )
+
+        else:
+
+            st.metric(
+                "Predicted Value",
+                f"{float(prediction[0]):.4f}",
+            )
+
+        # --------------------------------------------------
+        # SHAP Contributions
+        # --------------------------------------------------
+
+        contributions_df = pd.DataFrame(
+            contributions,
+            columns=[
+                "feature",
+                "contribution",
+            ],
+        )
+
+        st.subheader(
+            "Top Feature Contributions"
+        )
+
+        st.dataframe(
+            contributions_df.head(10),
+            use_container_width=True,
+        )
+
+        st.bar_chart(
+            contributions_df.head(10)
+            .set_index("feature")
+        )
+
+
+
+
+
 # --------------------------------------------------
 # Prediction
 # --------------------------------------------------
@@ -1039,9 +1229,9 @@ if "pipeline" in st.session_state:
         key="prediction_csv",
     )
 
-    # ----------------------------------------------
-    # Detect prediction file changes
-    # ----------------------------------------------
+    # --------------------------------------------------
+    # Prediction File State
+    # --------------------------------------------------
 
     current_prediction_signature = (
         get_file_signature(
@@ -1054,6 +1244,10 @@ if "pipeline" in st.session_state:
             "prediction_file_signature"
         )
     )
+
+    # --------------------------------------------------
+    # No file uploaded
+    # --------------------------------------------------
 
     if prediction_file is None:
 
@@ -1069,15 +1263,24 @@ if "pipeline" in st.session_state:
 
     else:
 
+        # --------------------------------------------------
+        # New file detected
+        # --------------------------------------------------
+
         if (
             previous_prediction_signature
-            is not None
-            and previous_prediction_signature
             != current_prediction_signature
         ):
 
+            # Immediately remove results belonging
+            # to the previous file.
             st.session_state.pop(
                 "prediction_results",
+                None,
+            )
+
+            st.session_state.pop(
+                "prediction_error",
                 None,
             )
 
@@ -1085,9 +1288,9 @@ if "pipeline" in st.session_state:
             "prediction_file_signature"
         ] = current_prediction_signature
 
-        # ------------------------------------------
+        # --------------------------------------------------
         # Read prediction dataset
-        # ------------------------------------------
+        # --------------------------------------------------
 
         try:
 
@@ -1097,7 +1300,8 @@ if "pipeline" in st.session_state:
 
             st.write(
                 f"Prediction dataset: "
-                f"**{len(prediction_df)} rows**"
+                f"**{len(prediction_df):,} rows** | "
+                f"**{len(prediction_df.columns):,} columns**"
             )
 
             with st.expander(
@@ -1109,9 +1313,9 @@ if "pipeline" in st.session_state:
                     use_container_width=True,
                 )
 
-            # --------------------------------------
+            # --------------------------------------------------
             # Generate Predictions
-            # --------------------------------------
+            # --------------------------------------------------
 
             if st.button(
                 "Generate Predictions",
@@ -1126,48 +1330,95 @@ if "pipeline" in st.session_state:
                     "pipeline"
                 ]
 
-                try:
+                # Always clear previous results
+                # before attempting a new prediction.
+                st.session_state.pop(
+                    "prediction_results",
+                    None,
+                )
 
-                    prediction_results = (
-                        generate_predictions(
-                            pipeline,
-                            prediction_df,
+                st.session_state.pop(
+                    "prediction_error",
+                    None,
+                )
+
+                with st.status(
+                    "Generating predictions...",
+                    expanded=True,
+                ) as status:
+
+                    try:
+
+                        st.write(
+                            "⟳ Validating prediction schema..."
                         )
-                    )
 
-                    st.session_state[
-                        "prediction_results"
-                    ] = prediction_results
+                        prediction_results = (
+                            generate_predictions(
+                                pipeline,
+                                prediction_df,
+                            )
+                        )
 
-                    st.success(
-                        "Predictions generated successfully."
-                    )
+                        st.write(
+                            "✓ Schema validation passed."
+                        )
 
-                except ValueError as e:
+                        st.write(
+                            "✓ Predictions generated."
+                        )
 
-                    # IMPORTANT:
-                    # Never display stale predictions
-                    # after a failed prediction attempt.
+                        st.session_state[
+                            "prediction_results"
+                        ] = prediction_results
 
-                    st.session_state.pop(
-                        "prediction_results",
-                        None,
-                    )
+                        status.update(
+                            label=(
+                                "Predictions generated "
+                                "successfully"
+                            ),
+                            state="complete",
+                        )
 
-                    st.error(
-                        f"Schema validation failed: {e}"
-                    )
+                    except ValueError as e:
 
-                except Exception as e:
+                        st.session_state.pop(
+                            "prediction_results",
+                            None,
+                        )
 
-                    st.session_state.pop(
-                        "prediction_results",
-                        None,
-                    )
+                        st.session_state[
+                            "prediction_error"
+                        ] = (
+                            f"Schema validation failed: "
+                            f"{e}"
+                        )
 
-                    st.error(
-                        f"Prediction failed: {e}"
-                    )
+                        status.update(
+                            label=(
+                                "Schema validation failed"
+                            ),
+                            state="error",
+                        )
+
+                    except Exception as e:
+
+                        st.session_state.pop(
+                            "prediction_results",
+                            None,
+                        )
+
+                        st.session_state[
+                            "prediction_error"
+                        ] = (
+                            f"Prediction failed: "
+                            f"{e}"
+                        )
+
+                        status.update(
+                            label="Prediction failed",
+                            state="error",
+                        )
 
         except Exception as e:
 
@@ -1176,8 +1427,26 @@ if "pipeline" in st.session_state:
                 None,
             )
 
+            st.session_state[
+                "prediction_error"
+            ] = (
+                f"Could not read prediction file: "
+                f"{e}"
+            )
+
+        # --------------------------------------------------
+        # Display errors
+        # --------------------------------------------------
+
+        if (
+            "prediction_error"
+            in st.session_state
+        ):
+
             st.error(
-                f"Could not read prediction file: {e}"
+                st.session_state[
+                    "prediction_error"
+                ]
             )
 
 
@@ -1185,7 +1454,10 @@ if "pipeline" in st.session_state:
 # Prediction Results
 # --------------------------------------------------
 
-if "prediction_results" in st.session_state:
+if (
+    "prediction_results"
+    in st.session_state
+):
 
     st.subheader(
         "Prediction Results"
@@ -1197,14 +1469,25 @@ if "prediction_results" in st.session_state:
         ]
     )
 
+    st.success(
+        f"Generated predictions for "
+        f"**{len(prediction_results):,} rows**."
+    )
+
     st.dataframe(
         prediction_results,
         use_container_width=True,
     )
 
-    csv_data = prediction_results.to_csv(
-        index=False
-    ).encode("utf-8")
+    # --------------------------------------------------
+    # Download
+    # --------------------------------------------------
+
+    csv_data = (
+        prediction_results
+        .to_csv(index=False)
+        .encode("utf-8")
+    )
 
     st.download_button(
         label="Download Predictions CSV",
